@@ -1,4 +1,3 @@
-import { MockProxy, mock } from 'jest-mock-extended';
 import * as httpMock from '../../test/http-mock';
 import { logger, mocked } from '../../test/util';
 import {
@@ -22,14 +21,24 @@ jest.mock('./maven');
 jest.mock('./npm');
 jest.mock('./packagist', () => ({
   __esModule: true,
-  PackagistDatasource: jest.fn(),
+  PackagistDatasource: jest.fn(() => {
+    const { PackagistDatasource: ActualPackagistDatasource } =
+      jest.requireActual('./packagist');
+    return Object.assign(Object.create(ActualPackagistDatasource.prototype), {
+      id: 'packagist',
+      registryStrategy: 'hunt',
+      customRegistrySupport: true,
+      getReleases: () => packagistDatasourceGetReleasesMock(),
+    });
+  }),
 }));
 
 const dockerDatasource = mocked(datasourceDocker);
 const mavenDatasource = mocked(datasourceMaven);
 const npmDatasource = mocked(datasourceNpm);
-const packagistDatasource: MockProxy<PackagistDatasource> =
-  mock<PackagistDatasource>();
+const packagistDatasourceGetReleasesMock = jest.fn();
+const { PackagistDatasource: ActualPackagistDatasource } =
+  jest.requireActual('./packagist');
 
 describe('datasource/index', () => {
   beforeEach(() => {
@@ -179,46 +188,47 @@ describe('datasource/index', () => {
     expect(res).toBeNull();
   });
   it('hunts registries and returns success', async () => {
-    packagistDatasource.getReleases.mockResolvedValueOnce(null);
-    packagistDatasource.getReleases.mockResolvedValueOnce({
-      releases: [{ version: '1.0.0' }],
-    });
+    packagistDatasourceGetReleasesMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        releases: [{ version: '1.0.0' }],
+      });
     const res = await datasource.getPkgReleases({
-      datasource: PackagistDatasource.id,
+      datasource: ActualPackagistDatasource.id,
       depName: 'something',
       registryUrls: ['https://reg1.com', 'https://reg2.io'],
     });
     expect(res).not.toBeNull();
   });
   it('returns null for HOST_DISABLED', async () => {
-    packagistDatasource.getReleases.mockImplementationOnce(() => {
+    packagistDatasourceGetReleasesMock.mockImplementationOnce(() => {
       throw new ExternalHostError(new Error(HOST_DISABLED));
     });
     expect(
       await datasource.getPkgReleases({
-        datasource: PackagistDatasource.id,
+        datasource: ActualPackagistDatasource.id,
         depName: 'something',
         registryUrls: ['https://reg1.com'],
       })
     ).toBeNull();
   });
   it('hunts registries and aborts on ExternalHostError', async () => {
-    packagistDatasource.getReleases.mockImplementationOnce(() => {
-      throw new ExternalHostError(new Error());
-    });
+    packagistDatasourceGetReleasesMock.mockRejectedValue(
+      new ExternalHostError(new Error())
+    );
     await expect(
       datasource.getPkgReleases({
-        datasource: PackagistDatasource.id,
+        datasource: ActualPackagistDatasource.id,
         depName: 'something',
         registryUrls: ['https://reg1.com', 'https://reg2.io'],
       })
     ).rejects.toThrow(EXTERNAL_HOST_ERROR);
   });
   it('hunts registries and returns null', async () => {
-    packagistDatasource.getReleases.mockImplementationOnce(() => {
+    packagistDatasourceGetReleasesMock.mockImplementationOnce(() => {
       throw new Error('a');
     });
-    packagistDatasource.getReleases.mockImplementationOnce(() => {
+    packagistDatasourceGetReleasesMock.mockImplementationOnce(() => {
       throw new Error('b');
     });
     expect(
